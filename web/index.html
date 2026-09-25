@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RowGuard — Vibe Secure Ledger</title>
+  <meta name="description" content="Cryptographic integrity ledger for student records with SQL injection detection and SHA-256 hash auditing."/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    body { background: #0a0e1a; }
+
+    /* Glassmorphism card */
+    .glass {
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #6ee7f7 0%, #818cf8 50%, #f472b6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Animated background orbs */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.15;
+      animation: float 8s ease-in-out infinite;
+      pointer-events: none;
+    }
+    .orb-1 { width: 400px; height: 400px; background: #6366f1; top: -100px; left: -100px; animation-delay: 0s; }
+    .orb-2 { width: 300px; height: 300px; background: #06b6d4; top: 50%; right: -80px; animation-delay: 3s; }
+    .orb-3 { width: 250px; height: 250px; background: #ec4899; bottom: -60px; left: 40%; animation-delay: 5s; }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px) scale(1); }
+      50% { transform: translateY(-20px) scale(1.05); }
+    }
+
+    /* Status badges */
+    .badge-secure {
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.4);
+      color: #6ee7b7;
+    }
+    .badge-tampered {
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.4);
+      color: #fca5a5;
+    }
+    .badge-sqli {
+      background: rgba(245,158,11,0.15);
+      border: 1px solid rgba(245,158,11,0.4);
+      color: #fcd34d;
+    }
+
+    /* Input fields */
+    .field {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: #e2e8f0;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .field:focus {
+      outline: none;
+      border-color: #818cf8;
+      box-shadow: 0 0 0 3px rgba(129,140,248,0.15);
+    }
+    .field::placeholder { color: rgba(255,255,255,0.25); }
+
+    /* Buttons */
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-danger {
+      background: rgba(239,68,68,0.2);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: #fca5a5;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-danger:hover { background: rgba(239,68,68,0.35); transform: translateY(-1px); }
+
+    .btn-edit {
+      background: rgba(99,102,241,0.2);
+      border: 1px solid rgba(99,102,241,0.3);
+      color: #a5b4fc;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-edit:hover { background: rgba(99,102,241,0.35); transform: translateY(-1px); }
+
+    .btn-audit {
+      background: linear-gradient(135deg, #0891b2, #6366f1);
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn-audit:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    /* Table */
+    .trow { transition: background 0.15s; }
+    .trow:hover { background: rgba(255,255,255,0.04); }
+
+    /* Spinner */
+    .spinner {
+      border: 2px solid rgba(255,255,255,0.1);
+      border-top-color: #818cf8;
+      border-radius: 50%;
+      width: 16px; height: 16px;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    #toast {
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* Slide-in animation for table rows */
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .row-animate { animation: slideIn 0.25s ease forwards; }
+
+    /* Hash truncation */
+    .hash-pill {
+      background: rgba(6,182,212,0.1);
+      border: 1px solid rgba(6,182,212,0.25);
+      color: #67e8f9;
+      font-size: 0.65rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    /* Audit panel */
+    #auditPanel { animation: slideIn 0.3s ease; }
+
+    /* Detail expand */
+    .detail-text {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.45);
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-200">
+
+  <!-- Background orbs -->
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed top-6 right-6 z-50 hidden glass rounded-xl px-5 py-3 flex items-center gap-3 shadow-2xl max-w-sm">
+    <span id="toastIcon" class="text-lg"></span>
+    <span id="toastMsg" class="text-sm font-medium"></span>
+  </div>
+
+  <!-- Header -->
+  <header class="glass border-b border-white/5 sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-lg shadow-lg">🛡️</div>
+        <div>
+          <h1 class="text-lg font-bold gradient-text">RowGuard</h1>
+          <p class="text-xs text-slate-500 -mt-0.5">Vibe Secure Ledger</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div id="dbStatus" class="flex items-center gap-2 text-xs text-slate-500">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 shadow shadow-emerald-500/50 animate-pulse"></span>
+          Connected
+        </div>
+        <button id="auditBtn" onclick="runAudit()" class="btn-audit text-white text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-2">
+          <span>🔍</span> Run Integrity Audit
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+    <!-- Stats bar -->
+    <div class="grid grid-cols-3 gap-4">
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Total Records</p>
+        <p id="statTotal" class="text-3xl font-bold text-white mt-1">—</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Integrity Verified</p>
+        <p id="statSecure" class="text-3xl font-bold text-emerald-400 mt-1">—</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Anomalies Detected</p>
+        <p id="statAnomalies" class="text-3xl font-bold text-red-400 mt-1">—</p>
+      </div>
+    </div>
+
+    <!-- Form Card -->
+    <div class="glass rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h2 id="formTitle" class="text-base font-semibold text-white">➕ Add Student Record</h2>
+        <button id="cancelBtn" onclick="cancelEdit()" class="hidden text-xs text-slate-400 hover:text-white border border-white/10 px-3 py-1.5 rounded-lg transition-colors">✕ Cancel Edit</button>
+      </div>
+      <form id="studentForm" onsubmit="handleSubmit(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Student Name</label>
+          <input id="studentName" type="text" placeholder="e.g. Alice Johnson" class="field w-full rounded-xl px-4 py-2.5 text-sm" required/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Subject Code</label>
+          <input id="subjectCode" type="text" placeholder="e.g. CS401" class="field w-full rounded-xl px-4 py-2.5 text-sm" required/>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Marks (0–100)</label>
+          <input id="marks" type="number" min="0" max="100" placeholder="85" class="field w-full rounded-xl px-4 py-2.5 text-sm" required/>
+        </div>
+        <div class="sm:col-span-3">
+          <button type="submit" id="submitBtn" class="btn-primary text-white font-semibold text-sm px-6 py-2.5 rounded-xl w-full sm:w-auto">
+            Save Record
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Audit Results Panel (hidden by default) -->
+    <div id="auditPanel" class="hidden glass rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-base font-semibold text-white">🔒 Integrity Audit Results</h2>
+        <button onclick="document.getElementById('auditPanel').classList.add('hidden')" class="text-xs text-slate-500 hover:text-white transition-colors">✕ Close</button>
+      </div>
+      <div id="auditResults" class="space-y-3"></div>
+    </div>
+
+    <!-- Records Table -->
+    <div class="glass rounded-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+        <h2 class="text-base font-semibold text-white">📋 Ledger Records</h2>
+        <button onclick="loadStudents()" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
+          <span>↺</span> Refresh
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-white/5 text-xs text-slate-500 uppercase tracking-wider">
+              <th class="px-6 py-3 text-left font-medium">ID</th>
+              <th class="px-6 py-3 text-left font-medium">Student Name</th>
+              <th class="px-6 py-3 text-left font-medium">Subject</th>
+              <th class="px-6 py-3 text-left font-medium">Marks</th>
+              <th class="px-6 py-3 text-left font-medium">Hash Footprint</th>
+              <th class="px-6 py-3 text-left font-medium">Created</th>
+              <th class="px-6 py-3 text-left font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr>
+              <td colspan="7" class="px-6 py-12 text-center text-slate-600 text-sm">Loading records…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
