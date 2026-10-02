@@ -15,6 +15,7 @@ import (
 
 	"vibe-secure-ledger/config"
 	"vibe-secure-ledger/controllers"
+	"vibe-secure-ledger/models"
 )
 
 //go:embed web
@@ -22,18 +23,39 @@ var webFS embed.FS
 
 func main() {
 	// ── Database ─────────────────────────────────────────────────────────────
-	config.ConnectDB()
+	// AutoMigrate runs on startup: creates / alters the students table (adding
+	// the deleted_at column for soft-delete) and creates ledger_checksums.
+	config.ConnectDB(
+		&models.Student{},
+		&models.LedgerChecksum{},
+	)
 	defer config.CloseDB()
 
 	// ── Router ───────────────────────────────────────────────────────────────
 	router := httprouter.New()
 
-	// REST API routes
-	router.POST("/api/students", controllers.CreateStudent)
-	router.GET("/api/students", controllers.GetAllStudents)
-	router.PUT("/api/students/:id", controllers.UpdateStudent)
-	router.DELETE("/api/students/:id", controllers.DeleteStudent)
-	router.POST("/api/students/validate", controllers.ValidateStudents)
+	// ── RESTful API routes (/student/*) ──────────────────────────────────────
+	//
+	// Resource: /student
+	//   GET    /student/all            → List all active records (verify integrity)
+	//   POST   /student/create         → Add a new record and generate initial hash
+	//   PATCH  /student/update/:id     → Modify a record and refresh hash/tampered status
+	//   DELETE /student/delete/:id     → Soft-delete a record (move to trash)
+	//
+	// Trash / Recycle-bin:
+	//   GET    /student/trash          → List all trashed (soft-deleted) records
+	//   POST   /student/restore/:id    → Restore a trashed record by ID
+	//
+	// Integrity audit:
+	//   POST   /student/validate       → Full ledger + per-row integrity audit
+
+	router.GET("/student/all", controllers.GetAllStudents)
+	router.POST("/student/create", controllers.CreateStudent)
+	router.PATCH("/student/update/:id", controllers.UpdateStudent)
+	router.DELETE("/student/delete/:id", controllers.DeleteStudent)
+	router.GET("/student/trash", controllers.GetTrashedStudents)
+	router.POST("/student/restore/:id", controllers.RestoreStudent)
+	router.POST("/student/validate", controllers.ValidateStudents)
 
 	// Static frontend — serve the embedded web/ subtree
 	webSubFS, err := fs.Sub(webFS, "web")
@@ -65,7 +87,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("[main] vibe-secure-ledger running → http://localhost:%s", port)
+		log.Printf("[main] RowGuard running → http://localhost:%s", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[main] Server error: %v", err)
 		}

@@ -23,7 +23,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// ── POST /api/students ────────────────────────────────────────────────────────
+func parseUintParam(ps httprouter.Params, name string) (uint, bool) {
+	v, err := strconv.ParseUint(ps.ByName(name), 10, 64)
+	if err != nil || v == 0 {
+		return 0, false
+	}
+	return uint(v), true
+}
+
+// ── POST /student/create ──────────────────────────────────────────────────────
 
 func CreateStudent(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var req models.CreateStudentRequest
@@ -32,7 +40,6 @@ func CreateStudent(w http.ResponseWriter, r *http.Request, _ httprouter.Params) 
 		return
 	}
 
-	// Field presence validation
 	req.StudentName = models.SanitiseString(req.StudentName)
 	req.SubjectCode = models.SanitiseString(req.SubjectCode)
 
@@ -69,7 +76,7 @@ func CreateStudent(w http.ResponseWriter, r *http.Request, _ httprouter.Params) 
 	writeJSON(w, http.StatusCreated, student)
 }
 
-// ── GET /api/students ─────────────────────────────────────────────────────────
+// ── GET /student/all ──────────────────────────────────────────────────────────
 
 func GetAllStudents(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	students, err := repository.GetAllStudents()
@@ -85,12 +92,12 @@ func GetAllStudents(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 	writeJSON(w, http.StatusOK, students)
 }
 
-// ── PUT /api/students/:id ─────────────────────────────────────────────────────
+// ── PATCH /student/update/:id ─────────────────────────────────────────────────
 
 func UpdateStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	id, err := strconv.Atoi(ps.ByName("id"))
-	if err != nil || id <= 0 {
-		writeError(w, http.StatusBadRequest, "Invalid student ID.")
+	id, ok := parseUintParam(ps, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid record ID.")
 		return
 	}
 
@@ -116,7 +123,6 @@ func UpdateStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params)
 		return
 	}
 
-	// SQLi guard on update inputs
 	fields := map[string]string{
 		"student_name": req.StudentName,
 		"subject_code": req.SubjectCode,
@@ -136,12 +142,12 @@ func UpdateStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params)
 	writeJSON(w, http.StatusOK, student)
 }
 
-// ── DELETE /api/students/:id ──────────────────────────────────────────────────
+// ── DELETE /student/delete/:id (soft-delete → trash) ─────────────────────────
 
 func DeleteStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	id, err := strconv.Atoi(ps.ByName("id"))
-	if err != nil || id <= 0 {
-		writeError(w, http.StatusBadRequest, "Invalid student ID.")
+	id, ok := parseUintParam(ps, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid record ID.")
 		return
 	}
 
@@ -150,16 +156,53 @@ func DeleteStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Record deleted successfully."})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Record moved to trash. Use the restore endpoint to recover it.",
+	})
 }
 
-// ── POST /api/students/validate ───────────────────────────────────────────────
+// ── GET /student/trash ────────────────────────────────────────────────────────
+
+func GetTrashedStudents(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	students, err := repository.GetTrashedStudents()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to fetch trash: "+err.Error())
+		return
+	}
+	if students == nil {
+		students = []models.Student{}
+	}
+	writeJSON(w, http.StatusOK, students)
+}
+
+// ── POST /student/restore/:id ─────────────────────────────────────────────────
+
+func RestoreStudent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	id, ok := parseUintParam(ps, "id")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid record ID.")
+		return
+	}
+
+	student, err := repository.RestoreStudent(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Restore failed: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "Record restored successfully.",
+		"record":  student,
+	})
+}
+
+// ── POST /student/validate ────────────────────────────────────────────────────
 
 func ValidateStudents(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	results, err := repository.ValidateAllStudents()
+	report, err := repository.ValidateAllStudents()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Validation failed: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, results)
+	writeJSON(w, http.StatusOK, report)
 }

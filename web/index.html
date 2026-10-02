@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>RowGuard — Vibe Secure Ledger</title>
-  <meta name="description" content="Cryptographic integrity ledger for student records with SQL injection detection and SHA-256 hash auditing."/>
+  <meta name="description" content="Cryptographic integrity ledger for student records with SQL injection detection, SHA-256 hash auditing, and ledger-chain tamper detection."/>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
@@ -101,11 +101,36 @@
     }
     .btn-edit:hover { background: rgba(99,102,241,0.35); transform: translateY(-1px); }
 
+    .btn-restore {
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.3);
+      color: #6ee7b7;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-restore:hover { background: rgba(16,185,129,0.3); transform: translateY(-1px); }
+
     .btn-audit {
       background: linear-gradient(135deg, #0891b2, #6366f1);
       transition: opacity 0.2s, transform 0.1s;
     }
     .btn-audit:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    /* Tabs */
+    .tab-btn {
+      padding: 0.5rem 1.25rem;
+      border-radius: 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #64748b;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .tab-btn:hover { color: #e2e8f0; }
+    .tab-active {
+      color: #e2e8f0 !important;
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.1);
+    }
 
     /* Table */
     .trow { transition: background 0.15s; }
@@ -154,6 +179,9 @@
       color: rgba(255,255,255,0.45);
       word-break: break-all;
     }
+
+    /* Trash row styling */
+    .trash-row td { opacity: 0.7; }
   </style>
 </head>
 <body class="min-h-screen text-slate-200">
@@ -194,9 +222,9 @@
   <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
 
     <!-- Stats bar -->
-    <div class="grid grid-cols-3 gap-4">
+    <div class="grid grid-cols-4 gap-4">
       <div class="glass rounded-2xl p-5">
-        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Total Records</p>
+        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Active Records</p>
         <p id="statTotal" class="text-3xl font-bold text-white mt-1">—</p>
       </div>
       <div class="glass rounded-2xl p-5">
@@ -206,6 +234,10 @@
       <div class="glass rounded-2xl p-5">
         <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">Anomalies Detected</p>
         <p id="statAnomalies" class="text-3xl font-bold text-red-400 mt-1">—</p>
+      </div>
+      <div class="glass rounded-2xl p-5">
+        <p class="text-xs text-slate-500 font-medium uppercase tracking-wider">In Trash</p>
+        <p id="statTrashed" class="text-3xl font-bold text-amber-400 mt-1">—</p>
       </div>
     </div>
 
@@ -236,19 +268,29 @@
       </form>
     </div>
 
+    <!-- Ledger Banner (shown after audit) -->
+    <div id="ledgerBanner" class="hidden"></div>
+
     <!-- Audit Results Panel (hidden by default) -->
     <div id="auditPanel" class="hidden glass rounded-2xl p-6">
       <div class="flex items-center justify-between mb-5">
-        <h2 class="text-base font-semibold text-white">🔒 Integrity Audit Results</h2>
-        <button onclick="document.getElementById('auditPanel').classList.add('hidden')" class="text-xs text-slate-500 hover:text-white transition-colors">✕ Close</button>
+        <h2 class="text-base font-semibold text-white">🔒 Per-Row Integrity Audit Results</h2>
+        <button onclick="document.getElementById('auditPanel').classList.add('hidden'); document.getElementById('ledgerBanner').classList.add('hidden');"
+          class="text-xs text-slate-500 hover:text-white transition-colors">✕ Close</button>
       </div>
       <div id="auditResults" class="space-y-3"></div>
     </div>
 
-    <!-- Records Table -->
-    <div class="glass rounded-2xl overflow-hidden">
+    <!-- Tab bar -->
+    <div class="flex items-center gap-2">
+      <button id="tabLedger" class="tab-btn tab-active" onclick="switchTab('ledger')">📋 Active Ledger</button>
+      <button id="tabTrash"  class="tab-btn"            onclick="switchTab('trash')">🗑 Trash</button>
+    </div>
+
+    <!-- LEDGER VIEW -->
+    <div id="ledgerView" class="glass rounded-2xl overflow-hidden">
       <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between">
-        <h2 class="text-base font-semibold text-white">📋 Ledger Records</h2>
+        <h2 class="text-base font-semibold text-white">📋 Active Ledger Records</h2>
         <button onclick="loadStudents()" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
           <span>↺</span> Refresh
         </button>
@@ -269,6 +311,38 @@
           <tbody id="tableBody">
             <tr>
               <td colspan="7" class="px-6 py-12 text-center text-slate-600 text-sm">Loading records…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TRASH VIEW -->
+    <div id="trashView" class="hidden glass rounded-2xl overflow-hidden">
+      <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <h2 class="text-base font-semibold text-white">🗑 Recycle Bin</h2>
+          <span class="text-xs text-amber-400/70 border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 rounded-full">Soft-deleted rows</span>
+        </div>
+        <button onclick="loadTrash()" class="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
+          <span>↺</span> Refresh
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-white/5 text-xs text-slate-500 uppercase tracking-wider">
+              <th class="px-6 py-3 text-left font-medium">ID</th>
+              <th class="px-6 py-3 text-left font-medium">Student Name</th>
+              <th class="px-6 py-3 text-left font-medium">Subject</th>
+              <th class="px-6 py-3 text-left font-medium">Marks</th>
+              <th class="px-6 py-3 text-left font-medium">Deleted At</th>
+              <th class="px-6 py-3 text-left font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="trashBody">
+            <tr>
+              <td colspan="6" class="px-6 py-12 text-center text-slate-600 text-sm">Loading trash…</td>
             </tr>
           </tbody>
         </table>

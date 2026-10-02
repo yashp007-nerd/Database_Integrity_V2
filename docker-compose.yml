@@ -1,0 +1,12 @@
+services:
+  db:
+    image: postgres:latest
+    container_name: rowguardgolang-db-1
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: rowguard_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./.db:/var/lib/postgresql

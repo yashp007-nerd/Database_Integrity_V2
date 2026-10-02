@@ -1,77 +1,93 @@
 package config
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-// DB is the global connection pool shared across all repository operations.
-var DB *pgxpool.Pool
+// DB is the global GORM database handle shared across all repository operations.
+var DB *gorm.DB
 
 // ConnectDB reads connection parameters from environment variables,
-// constructs a pgx connection pool with sane production defaults, and
-// validates the pool with a ping before returning.
+// opens a GORM/pgx connection pool with sane production defaults, runs
+// AutoMigrate to keep the schema current, and validates the pool with
+// a ping before returning.
 //
 // Environment variables consumed:
 //
 //	PGHOST     – PostgreSQL host          (default: localhost)
-//	PGPORT     – PostgreSQL port          (default: 5432)
-//	PGUSER     – Database user            (default: postgres)
-//	PGPASSWORD – Database password        (required)
-//	PGDATABASE – Target database name     (required)
+//	PGPORT     – PostgreSQL port          (default: 5433 for Docker dev)
+//	PGUSER     – Database user            (default: myuser for Docker dev)
+//	PGPASSWORD – Database password        (default: mypassword for Docker dev)
+//	PGDATABASE – Target database name     (default: rowguard_db for Docker dev)
 //	PGSSLMODE  – SSL mode                 (default: disable)
-func ConnectDB() {
+func ConnectDB(models ...interface{}) {
+	// Fallbacks match the local Docker Compose setup
 	host := envOrDefault("PGHOST", "localhost")
-	port := envOrDefault("PGPORT", "5432")
-	user := envOrDefault("PGUSER", "postgres")
-	password := mustEnv("PGPASSWORD")
-	dbname := mustEnv("PGDATABASE")
+	port := envOrDefault("PGPORT", "5433")
+	user := envOrDefault("PGUSER", "myuser")
+	password := envOrDefault("PGPASSWORD", "mypassword")
+	dbname := envOrDefault("PGDATABASE", "rowguard_db")
 	sslmode := envOrDefault("PGSSLMODE", "disable")
 
 	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Kolkata",
 		host, port, user, password, dbname, sslmode,
 	)
 
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		log.Fatalf("[config] Failed to parse DSN: %v", err)
+	gormCfg := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
 	}
 
-	// ── Pool tuning ──────────────────────────────────────────────────────────
-	cfg.MaxConns = 20
-	cfg.MinConns = 2
-	cfg.MaxConnLifetime = 30 * time.Minute
-	cfg.MaxConnIdleTime = 10 * time.Minute
-	cfg.HealthCheckPeriod = 1 * time.Minute
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	db, err := gorm.Open(postgres.Open(dsn), gormCfg)
 	if err != nil {
-		log.Fatalf("[config] Unable to create connection pool: %v", err)
+		log.Fatalf("[config] Failed to connect to database: %v", err)
 	}
+
+	// ── Pool tuning via the underlying *sql.DB ────────────────────────────────
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("[config] Failed to get underlying sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 
 	// Validate the pool is reachable before accepting traffic.
-	if err := pool.Ping(ctx); err != nil {
+	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("[config] Database ping failed: %v", err)
 	}
 
-	DB = pool
-	log.Printf("[config] PostgreSQL pool established → %s:%s/%s (maxConns=%d)", host, port, dbname, cfg.MaxConns)
+	// ── Auto-migrate all registered models ───────────────────────────────────
+	if len(models) > 0 {
+		if err := db.AutoMigrate(models...); err != nil {
+			log.Fatalf("[config] AutoMigrate failed: %v", err)
+		}
+		log.Printf("[config] AutoMigrate completed for %d model(s).", len(models))
+	}
+
+	DB = db
+	log.Printf("[config] GORM/PostgreSQL pool established → %s:%s/%s (maxConns=20)", host, port, dbname)
 }
 
-// CloseDB gracefully drains the connection pool.
+// CloseDB gracefully drains the underlying connection pool.
 // Call this via defer in main() to ensure clean shutdown.
 func CloseDB() {
 	if DB != nil {
-		DB.Close()
+		sqlDB, err := DB.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
 		log.Println("[config] PostgreSQL pool closed.")
 	}
 }
@@ -83,12 +99,4 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("[config] Required environment variable %q is not set.", key)
-	}
-	return v
 }
